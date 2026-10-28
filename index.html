@@ -438,7 +438,6 @@ body.nonav .fab{bottom:calc(16px + env(safe-area-inset-bottom))}
 <div class="sheet" id="sheet"></div>
 <div class="toast" id="toast"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 "use strict";
 /* ============ Telegram ============ */
@@ -638,11 +637,14 @@ function fitImg(el){
   const r = el.naturalWidth / (el.naturalHeight || 1);
   if (r < .85 || r > 1.18) el.parentNode.classList.add("fit");
 }
-function imgTag(src, ini){
-  return src ? `<img src="${esc(src)}" loading="lazy" alt="" onload="fitImg(this)" onerror="this.outerHTML='<div class=ini>${ini}</div>'">`
+/* Serverdan kichraytirilgan nusxa: kartochka 480px, sahifa 1080px (tez yuklanadi) */
+const sz = (u, w) => u && u.startsWith("api/") ? u + (u.includes("?") ? "&" : "?") + "w=" + w : u;
+function imgTag(src, ini, w = 480){
+  src = sz(src, w);
+  return src ? `<img src="${esc(src)}" decoding="async" loading="lazy" alt="" onload="fitImg(this)" onerror="this.outerHTML='<div class=ini>${ini}</div>'">`
              : `<div class="ini">${ini}</div>`;
 }
-function img(p){ return imgTag(p.photo, esc((p.name||"?").trim().charAt(0).toUpperCase())); }
+function img(p, w){ return imgTag(p.photo, esc((p.name||"?").trim().charAt(0).toUpperCase()), w); }
 function photo(p){ return `<div class="ph">${pct(p) ? `<span class="badge">−${pct(p)}%</span>` : ""}${img(p)}</div>`; }
 function subOf(p){
   if (p.stock <= 5) return `<div class="sub low">Qoldi ${p.stock} ta</div>`;
@@ -681,14 +683,14 @@ function cardHtml(g){
       <div class="ctl" data-gctl="${esc(g.key)}">${gctrl(g)}</div></div></div>`;
 }
 const tileSrc = c => c.img || ((groupsIn(c.id).find(g => g.photo) || {}).photo || "");
-function tileImg(c){ return imgTag(tileSrc(c), esc(c.name.charAt(0))); }
+function tileImg(c){ return imgTag(tileSrc(c), esc(c.name.charAt(0)), 240); }
 
 /* ============ bannerlar ============ */
 function bannersHtml(sale){
   const isDemo = typeof DEMO !== "undefined" && DEMO;
   const slides = [];
   if (banners.length){                       /* admin /banner bilan yuklagan rasmlar (1200×600) */
-    for (const b of banners) slides.push(`<button class="banner bimg" ${b.cat ? `data-cat="${b.cat}"` : ""}><img src="${esc(b.img)}" alt="" loading="lazy"></button>`);
+    for (const b of banners) slides.push(`<button class="banner bimg" ${b.cat ? `data-cat="${b.cat}"` : ""}><img src="${esc(sz(b.img, 1200))}" alt="" decoding="async"></button>`);
   } else for (const b of BANNERS){           /* rasm bo'lmasa — kategoriyalardan avtomatik */
     if (b.demo && !isDemo) continue;
     let cat = null, list = [];
@@ -814,7 +816,7 @@ function renderSheet(){
     opts += `<div class="opt"><div class="ol">Turi: <b>${esc(p.variant)}</b></div><div class="vchips">${g.variants.map(v => {
       const has = g.items.some(x => x.variant === v && (!p.pack || x.pack === p.pack));
       const any = g.items.find(x => x.variant === v && x.photo);
-      return `<button class="vchip ${v === p.variant ? "on" : ""} ${has ? "" : "dim"}" data-a="pickv" data-v="${esc(v)}">${any ? `<span class="vt">${imgTag(any.photo, "")}</span>` : ""}${esc(v)}</button>`;
+      return `<button class="vchip ${v === p.variant ? "on" : ""} ${has ? "" : "dim"}" data-a="pickv" data-v="${esc(v)}">${any ? `<span class="vt">${imgTag(any.photo, "", 160)}</span>` : ""}${esc(v)}</button>`;
     }).join("")}</div></div>`;
   }
   if (multi && g.packs.length > 1){
@@ -830,7 +832,7 @@ function renderSheet(){
     }).join("")}</div></div>`;
   }
   $("sheet").innerHTML = `
-    <div class="hero"><button class="x" data-a="close" aria-label="Yopish">${I.back}</button>${pct(p) ? `<span class="badge">−${pct(p)}%</span>` : ""}<div class="hi">${img(p)}</div></div>
+    <div class="hero"><button class="x" data-a="close" aria-label="Yopish">${I.back}</button>${pct(p) ? `<span class="badge">−${pct(p)}%</span>` : ""}<div class="hi">${img(p, 1080)}</div></div>
     <div class="in">
       <div class="tt"><div><h3>${esc(multi ? g.title : p.name)}</h3><div class="sub">${esc(multi ? [p.variant, p.pack].filter(Boolean).join(" · ") : (catById(p.cat) ? title(catPath(p.cat)) : ""))}</div></div></div>
       ${opts}
@@ -948,9 +950,26 @@ function fillPlaces(){
   sel.innerHTML = `<option value="">${g ? "Tanlang" : "Avval hududni tanlang"}</option>` +
     list.map(p => `<option value="${p.id}" ${+LS.place===p.id?"selected":""}>${esc(p.name)}</option>`).join("");
 }
+/* Xarita kutubxonasi faqat manzil tanlashda yuklanadi — do'kon tezroq ochiladi */
+let leafletP = null;
+function loadLeaflet(){
+  if (window.L) return Promise.resolve();
+  if (!leafletP) leafletP = new Promise((ok, no) => {
+    const sc = document.createElement("script");
+    sc.src = "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js";
+    sc.onload = ok; sc.onerror = () => { leafletP = null; no(); };
+    document.head.appendChild(sc);
+  });
+  return leafletP;
+}
 function initMap(){
   const box = $("m-map"); if (!box || !$("map")) return;
-  if (!window.L){ const w = box.querySelector(".mapwrap"); if (w) w.innerHTML = `<div class="empty" style="padding:30px 12px">Xarita yuklanmadi.<br>«Havola» yoki «Mo'ljal» orqali tanlang.</div>`; return; }
+  if (!window.L){
+    const want = LS;
+    loadLeaflet().then(() => { if (LS === want && $("map") && want.mode === "map") initMap(); })
+                 .catch(() => { const w = box.querySelector(".mapwrap"); if (w) w.innerHTML = `<div class="empty" style="padding:30px 12px">Xarita yuklanmadi.<br>«Havola» yoki «Mo'ljal» orqali tanlang.</div>`; });
+    return;
+  }
   const p0 = LS.pt, c = p0 ? [p0.lat, p0.lon] : (me ? me.center : [41.12, 72.07]);
   if (map){ map.remove(); map = null; }
   map = L.map("map", {zoomControl:false, attributionControl:true}).setView(c, p0 ? 17 : 14);
@@ -1407,13 +1426,21 @@ $("q").addEventListener("keydown", e => { if (e.key === "Enter") e.target.blur()
 
 /* ============ ishga tushirish ============ */
 (async function init(){
+  /* Katalog oxirgi nusxasi telefonda saqlanadi: do'kon darhol ochiladi, yangilari orqadan keladi */
+  const applyCat = data => { products = data.products; cats = data.categories; banners = data.banners || []; buildGroups(); };
+  const cached = store.get("mg_catalog", null);
+  let shown = false;
+  if (cached && cached.products){ applyCat(cached); renderHome(); updateBadge(); syncMain(); shown = true; }
   try {
     const data = await api("catalog");
-    products = data.products; cats = data.categories; banners = data.banners || [];
-    buildGroups();
+    const fresh = JSON.stringify(data);
+    if (!cached || JSON.stringify(cached) !== fresh){
+      try { localStorage.setItem("mg_catalog", fresh); } catch(e){}
+      applyCat(data);
+      if (shown && !sheetId && ["catalog","explore","category"].includes(view)){ const y = window.scrollY; go(view); window.scrollTo(0, y); }
+    }
   } catch(e){
-    $("home").innerHTML = `<div class="empty"><div class="e">😕</div><p>Mahsulotlarni yuklab bo'lmadi</p><button class="btn soft" onclick="location.reload()">Qayta urinish</button></div>`;
-    return;
+    if (!shown){ $("home").innerHTML = `<div class="empty"><div class="e">😕</div><p>Mahsulotlarni yuklab bo'lmadi</p><button class="btn soft" onclick="location.reload()">Qayta urinish</button></div>`; return; }
   }
   for (const id of Object.keys(cart)){ const p = byId(id); if (!p) delete cart[id]; else if (cart[id] > p.stock) cart[id] = p.stock; }
   saveCart();
